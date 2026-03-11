@@ -13,7 +13,8 @@ import { AiService } from '../ai/ai.service';
 import { JobsService } from '../jobs/jobs.service';
 import {
   StartInterviewDto,
-  AnswerDto,
+  AudioChunkDto,
+  StreamingAnswerDto,
   InterviewMessageDto,
   InterviewSession,
   InterviewStatus,
@@ -72,7 +73,7 @@ export class InterviewGateway implements OnGatewayConnection, OnGatewayDisconnec
         throw new Error('Job not found');
       }
 
-      // Create interview session
+      // Create interview session with streaming state
       const session: InterviewSession = {
         interviewId: data.interviewId,
         jobId: data.jobId,
@@ -85,6 +86,9 @@ export class InterviewGateway implements OnGatewayConnection, OnGatewayDisconnec
         questions: [],
         answers: [],
         startedAt: new Date(),
+        audioBuffer: [],
+        currentChunkIndex: 0,
+        isRecording: false,
       };
 
       this.activeSessions.set(data.interviewId, session);
@@ -98,28 +102,27 @@ export class InterviewGateway implements OnGatewayConnection, OnGatewayDisconnec
 
       session.questions.push(question);
 
-      // Convert to speech
-      const audioBuffer = await this.aiService.textToSpeech(question);
-      const audioBase64 = audioBuffer.toString('base64');
-
+      // Send audio in chunks for better real-time performance
       const questionId = `q-${Date.now()}-1`;
-
-      // Send question with audio to client
-      const message: InterviewMessageDto = {
+      
+      // First send the question text immediately (low latency)
+      const textMessage: InterviewMessageDto = {
         type: 'question',
         payload: {
           questionId,
           text: question,
           topic: data.topic,
           questionNumber: 1,
-          totalQuestions: 5, // Configurable
+          totalQuestions: 5,
         },
-        audioBase64,
         timestamp: Date.now(),
       };
+      client.emit('interview_message', textMessage);
+      
+      // Then stream TTS audio in chunks
+      await this.sendAudioInChunks(client, question, questionId);
 
-      client.emit('interview_message', message);
-      this.logger.log(`Sent question 1 to candidate ${data.candidateId}`);
+      this.logger.log(`Sent question 1 with streaming audio to candidate ${data.candidateId}`);
 
     } catch (error) {
       this.logger.error(`Failed to start interview: ${error.message}`);
@@ -133,119 +136,32 @@ export class InterviewGateway implements OnGatewayConnection, OnGatewayDisconnec
 
   @SubscribeMessage('submit_answer')
   async handleSubmitAnswer(
-    @MessageBody() data: AnswerDto,
+    @MessageBody() data: StreamingAnswerDto,
     @ConnectedSocket() client: Socket,
   ): Promise<void> {
     try {
-      this.logger.log(`Received answer for question ${data.questionId}`);
+      this.logger.log(`Received text answer for question ${data.questionId}`);
 
       const session = this.activeSessions.get(data.interviewId);
       if (!session) {
         throw new Error('Interview session not found');
       }
 
-      // Convert speech to text if audio provided
-      let transcribedAnswer = data.textAnswer || '';
-      if (data.audioBase64 && !transcribedAnswer) {
-        const audioBuffer = Buffer.from(data.audioBase64, 'base64');
-        transcribedAnswer = await this.aiService.speechToText(audioBuffer);
-      }
-
-      if (!transcribedAnswer.trim()) {
-        throw new Error('No answer provided');
-      }
-
-      // Get current question
-      const currentQuestion = session.questions[session.currentQuestionIndex];
-
-      // Evaluate answer
-      const evaluation = await this.aiService.evaluateAnswer(
-        currentQuestion,
-        transcribedAnswer,
-        session.topic,
-      );
-
-      // Store answer and evaluation
-      session.answers.push({
-        question: currentQuestion,
-        answer: transcribedAnswer,
-        score: evaluation.score,
-        feedback: evaluation.feedback,
-      });
-
-      // Send evaluation to client
-      const evalMessage: InterviewMessageDto = {
-        type: 'evaluation',
-        payload: {
-          interviewId: data.interviewId,
-          questionId: data.questionId,
-          score: evaluation.score,
-          feedback: evaluation.feedback,
-        },
-        timestamp: Date.now(),
-      };
-
-      client.emit('interview_message', evalMessage);
-
-      // Check if we should continue to next question or finish
-      const maxQuestions = 5;
-      if (session.currentQuestionIndex + 1 < maxQuestions) {
-        // Generate follow-up question
-        session.currentQuestionIndex++;
-        const nextQuestion = await this.aiService.generateFollowUpQuestion(
-          session.topic,
-          session.jobTitle,
-          session.questions,
-        );
-
-        session.questions.push(nextQuestion);
-
-        // Convert to speech
-        const audioBuffer = await this.aiService.textToSpeech(nextQuestion);
-        const audioBase64 = audioBuffer.toString('base64');
-
-        const nextQuestionId = `q-${Date.now()}-${session.currentQuestionIndex + 1}`;
-
-        const message: InterviewMessageDto = {
-          type: 'question',
-          payload: {
-            questionId: nextQuestionId,
-            text: nextQuestion,
-            topic: session.topic,
-            questionNumber: session.currentQuestionIndex + 1,
-            totalQuestions: maxQuestions,
-          },
-          audioBase64,
-          timestamp: Date.now(),
-        };
-
-        // Small delay for natural conversation flow
-        setTimeout(() => {
-          client.emit('interview_message', message);
-          this.logger.log(`Sent question ${session.currentQuestionIndex + 1} to candidate`);
-        }, 1000);
-
+      // For streaming, we process text answers immediately
+      // Audio chunks are handled separately via 'audio_chunk' event
+      if (data.textAnswer && data.textAnswer.trim()) {
+        await this.processAnswer(session, data.questionId, data.textAnswer, client);
       } else {
-        // Interview complete
-        session.status = InterviewStatus.COMPLETED;
+        // Signal ready to receive audio chunks
+        session.isRecording = true;
+        session.audioBuffer = [];
+        session.currentChunkIndex = 0;
         
-        await this.saveInterviewResults(session);
-
-        const completeMessage: InterviewMessageDto = {
-          type: 'complete',
-          payload: {
-            totalScore: this.calculateAverageScore(session.answers),
-            totalQuestions: session.answers.length,
-            answers: session.answers,
-          },
+        client.emit('interview_message', {
+          type: 'ready',
+          message: 'Ready to receive audio chunks',
           timestamp: Date.now(),
-        };
-
-        client.emit('interview_message', completeMessage);
-        this.logger.log(`Interview ${data.interviewId} completed`);
-
-        // Clean up session
-        this.activeSessions.delete(data.interviewId);
+        });
       }
 
     } catch (error) {
@@ -253,6 +169,221 @@ export class InterviewGateway implements OnGatewayConnection, OnGatewayDisconnec
       client.emit('interview_message', {
         type: 'error',
         error: error.message,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  @SubscribeMessage('audio_chunk')
+  async handleAudioChunk(
+    @MessageBody() data: AudioChunkDto,
+    @ConnectedSocket() client: Socket,
+  ): Promise<void> {
+    try {
+      const session = this.activeSessions.get(data.interviewId);
+      if (!session) {
+        throw new Error('Interview session not found');
+      }
+
+      // Store the chunk
+      const chunkBuffer = Buffer.from(data.audioChunkBase64, 'base64');
+      session.audioBuffer.push(chunkBuffer);
+      session.currentChunkIndex = data.chunkIndex;
+
+      this.logger.log(`Received audio chunk ${data.chunkIndex} for interview ${data.interviewId}`);
+
+      // If this is the final chunk, process all accumulated audio
+      if (data.isFinal) {
+        session.isRecording = false;
+        
+        // Combine all chunks
+        const fullAudio = Buffer.concat(session.audioBuffer);
+        
+        // Send intermediate transcription if needed
+        client.emit('interview_message', {
+          type: 'transcription',
+          transcription: {
+            text: 'Processing...',
+            isFinal: false,
+          },
+          timestamp: Date.now(),
+        });
+
+        // Process the complete audio
+        const transcribedText = await this.aiService.speechToText(fullAudio);
+        
+        this.logger.log(`Transcription completed: ${transcribedText.substring(0, 50)}...`);
+
+        // Send final transcription
+        client.emit('interview_message', {
+          type: 'transcription',
+          transcription: {
+            text: transcribedText,
+            isFinal: true,
+          },
+          timestamp: Date.now(),
+        });
+
+        // Process the answer
+        await this.processAnswer(session, data.questionId, transcribedText, client);
+        
+        // Clear buffer
+        session.audioBuffer = [];
+        session.currentChunkIndex = 0;
+      }
+
+    } catch (error) {
+      this.logger.error(`Failed to process audio chunk: ${error.message}`);
+      client.emit('interview_message', {
+        type: 'error',
+        error: error.message,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  private async processAnswer(
+    session: InterviewSession,
+    questionId: string,
+    answer: string,
+    client: Socket,
+  ): Promise<void> {
+    // Get current question
+    const currentQuestion = session.questions[session.currentQuestionIndex];
+
+    // Evaluate answer
+    const evaluation = await this.aiService.evaluateAnswer(
+      currentQuestion,
+      answer,
+      session.topic,
+    );
+
+    // Store answer and evaluation
+    session.answers.push({
+      question: currentQuestion,
+      answer: answer,
+      score: evaluation.score,
+      feedback: evaluation.feedback,
+    });
+
+    // Send evaluation to client
+    const evalMessage: InterviewMessageDto = {
+      type: 'evaluation',
+      payload: {
+        interviewId: session.interviewId,
+        questionId,
+        score: evaluation.score,
+        feedback: evaluation.feedback,
+      },
+      timestamp: Date.now(),
+    };
+
+    client.emit('interview_message', evalMessage);
+
+    // Check if we should continue to next question or finish
+    const maxQuestions = 5;
+    if (session.currentQuestionIndex + 1 < maxQuestions) {
+      // Generate follow-up question
+      session.currentQuestionIndex++;
+      const nextQuestion = await this.aiService.generateFollowUpQuestion(
+        session.topic,
+        session.jobTitle,
+        session.questions,
+      );
+
+      session.questions.push(nextQuestion);
+
+      const nextQuestionId = `q-${Date.now()}-${session.currentQuestionIndex + 1}`;
+
+      // Send question text immediately
+      const textMessage: InterviewMessageDto = {
+        type: 'question',
+        payload: {
+          questionId: nextQuestionId,
+          text: nextQuestion,
+          topic: session.topic,
+          questionNumber: session.currentQuestionIndex + 1,
+          totalQuestions: maxQuestions,
+        },
+        timestamp: Date.now(),
+      };
+      client.emit('interview_message', textMessage);
+
+      // Stream TTS audio
+      await this.sendAudioInChunks(client, nextQuestion, nextQuestionId);
+
+      this.logger.log(`Sent question ${session.currentQuestionIndex + 1} with streaming audio`);
+
+    } else {
+      // Interview complete
+      session.status = InterviewStatus.COMPLETED;
+      
+      await this.saveInterviewResults(session);
+
+      const completeMessage: InterviewMessageDto = {
+        type: 'complete',
+        payload: {
+          totalScore: this.calculateAverageScore(session.answers),
+          totalQuestions: session.answers.length,
+          answers: session.answers,
+        },
+        timestamp: Date.now(),
+      };
+
+      client.emit('interview_message', completeMessage);
+      this.logger.log(`Interview ${session.interviewId} completed`);
+
+      // Clean up session
+      this.activeSessions.delete(session.interviewId);
+    }
+  }
+
+  private async sendAudioInChunks(
+    client: Socket,
+    text: string,
+    questionId: string,
+    chunkSize: number = 8192,
+  ): Promise<void> {
+    try {
+      // Generate full TTS audio
+      const audioBuffer = await this.aiService.textToSpeech(text);
+      
+      // Split into chunks
+      const chunks: Buffer[] = [];
+      for (let i = 0; i < audioBuffer.length; i += chunkSize) {
+        chunks.push(audioBuffer.slice(i, i + chunkSize));
+      }
+
+      const totalChunks = chunks.length;
+
+      // Send chunks with small delay for streaming effect
+      for (let i = 0; i < chunks.length; i++) {
+        const chunkMessage: InterviewMessageDto = {
+          type: 'audio_chunk',
+          audioBase64: chunks[i].toString('base64'),
+          chunkInfo: {
+            chunkIndex: i,
+            totalChunks,
+            isFinal: i === chunks.length - 1,
+          },
+          payload: { questionId },
+          timestamp: Date.now(),
+        };
+
+        client.emit('interview_message', chunkMessage);
+        
+        // Small delay between chunks for smooth streaming
+        if (i < chunks.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+      }
+
+      this.logger.log(`Streamed ${totalChunks} audio chunks for question ${questionId}`);
+    } catch (error) {
+      this.logger.error(`Failed to stream audio: ${error.message}`);
+      client.emit('interview_message', {
+        type: 'error',
+        error: `Audio streaming failed: ${error.message}`,
         timestamp: Date.now(),
       });
     }

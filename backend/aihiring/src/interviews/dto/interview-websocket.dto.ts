@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsNumber, IsArray } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsNumber, IsArray, IsBoolean } from 'class-validator';
 
 export enum InterviewStatus {
   WAITING = 'waiting',
@@ -49,15 +49,33 @@ export class QuestionDto {
   totalQuestions?: number;
 }
 
-export class AnswerDto {
+export class AudioChunkDto {
   @IsString()
   interviewId: string;
 
   @IsString()
   questionId: string;
 
+  @IsNumber()
+  chunkIndex: number;
+
   @IsString()
-  audioBase64: string;
+  audioChunkBase64: string;
+
+  @IsBoolean()
+  isFinal: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  totalChunks?: number;
+}
+
+export class StreamingAnswerDto {
+  @IsString()
+  interviewId: string;
+
+  @IsString()
+  questionId: string;
 
   @IsOptional()
   @IsString()
@@ -80,10 +98,10 @@ export class EvaluationDto {
 
 export class InterviewMessageDto {
   @IsString()
-  type: 'question' | 'answer' | 'evaluation' | 'audio' | 'error' | 'complete';
+  type: 'question' | 'audio_chunk' | 'answer' | 'evaluation' | 'transcription' | 'error' | 'complete' | 'ready';
 
   @IsOptional()
-  payload?: QuestionDto | AnswerDto | EvaluationDto | any;
+  payload?: QuestionDto | EvaluationDto | any;
 
   @IsOptional()
   @IsString()
@@ -92,6 +110,20 @@ export class InterviewMessageDto {
   @IsOptional()
   @IsString()
   audioBase64?: string;
+
+  @IsOptional()
+  chunkInfo?: {
+    chunkIndex: number;
+    totalChunks: number;
+    isFinal: boolean;
+  };
+
+  @IsOptional()
+  transcription?: {
+    text: string;
+    isFinal: boolean;
+    confidence?: number;
+  };
 
   @IsOptional()
   timestamp?: number;
@@ -109,4 +141,9 @@ export class InterviewSession {
   questions: string[];
   answers: { question: string; answer: string; score: number; feedback: string }[];
   startedAt: Date;
+  
+  // Streaming state
+  audioBuffer: Buffer[];
+  currentChunkIndex: number;
+  isRecording: boolean;
 }
