@@ -13,6 +13,12 @@ export class Job {
 
   @Prop({ default: 'draft', enum: ['draft', 'active'] })
   status: string;
+
+  @Prop({ type: [String], default: [] })
+  skills: string[];
+
+  @Prop({ type: [String], default: [] })
+  topics: string[];
 }
 
 export const JobSchema = SchemaFactory.createForClass(Job);

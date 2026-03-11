@@ -19,6 +19,12 @@ export class Interview {
   @Prop({ default: 0 })
   score: number;
 
+  @Prop({ type: [{ question: String, answer: String, score: Number, feedback: String }] })
+  answers?: { question: string; answer: string; score: number; feedback: string }[];
+
+  @Prop()
+  completedAt?: Date;
+
   @Prop()
   duration: number; 
 }

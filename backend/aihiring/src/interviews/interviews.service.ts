@@ -25,6 +25,10 @@ export class InterviewsService {
     return this.interviewModel.findById(id).exec();
   }
 
+  async update(id: string, updateData: Partial<Interview> & { answers?: { question: string; answer: string; score: number; feedback: string }[]; completedAt?: Date }): Promise<Interview | null> {
+    return this.interviewModel.findByIdAndUpdate(id, updateData, { new: true }).exec();
+  }
+
   async updateStatus(id: string, status: string): Promise<Interview | null> {
     return this.interviewModel.findByIdAndUpdate(id, { status }, { new: true }).exec();
   }
