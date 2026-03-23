@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Put, Delete, Body, Param } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiParam, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { InterviewsService } from './interviews.service';
 import { CreateInterviewDto } from './dto/create-interview.dto';
@@ -42,6 +42,19 @@ export class InterviewsController {
     return this.interviewsService.findOne(id);
   }
 
+  @Put(':id')
+  @ApiOperation({ summary: 'Update interview', description: 'Update an existing interview' })
+  @ApiParam({ name: 'id', description: 'Interview ID', example: '507f1f77bcf86cd799439011' })
+  @ApiBody({ type: CreateInterviewDto })
+  @ApiResponse({ status: 200, description: 'Interview updated successfully' })
+  @ApiResponse({ status: 404, description: 'Interview not found' })
+  update(@Param('id') id: string, @Body() dto: CreateInterviewDto) {
+    return this.interviewsService.update(id, {
+      ...dto,
+      interviewDate: dto.interviewDate ? new Date(dto.interviewDate) : undefined,
+    } as any);
+  }
+
   @Patch(':id/status')
   @ApiOperation({ summary: 'Update interview status', description: 'Change the status of an interview (scheduled, in_progress, completed)' })
   @ApiParam({ name: 'id', description: 'Interview ID', example: '507f1f77bcf86cd799439011' })
@@ -76,5 +89,14 @@ export class InterviewsController {
   @ApiResponse({ status: 200, description: 'Answers retrieved successfully' })
   getAnswers(@Param('id') id: string) {
     return this.interviewsService.getAnswers(id);
+  }
+
+  @Delete(':id')
+  @ApiOperation({ summary: 'Delete interview', description: 'Delete a specific interview by ID' })
+  @ApiParam({ name: 'id', description: 'Interview ID', example: '507f1f77bcf86cd799439011' })
+  @ApiResponse({ status: 200, description: 'Interview deleted successfully' })
+  @ApiResponse({ status: 404, description: 'Interview not found' })
+  remove(@Param('id') id: string) {
+    return this.interviewsService.remove(id);
   }
 }

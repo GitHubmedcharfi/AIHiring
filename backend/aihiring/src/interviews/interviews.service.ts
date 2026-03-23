@@ -41,4 +41,8 @@ export class InterviewsService {
   async getAnswers(interviewId: string): Promise<Answer[]> {
     return this.answerModel.find({ interviewId }).exec();
   }
+
+  async remove(id: string): Promise<Interview | null> {
+    return this.interviewModel.findByIdAndDelete(id).exec();
+  }
 }

@@ -17,30 +17,43 @@ export class AiService {
     this.whisperUrl = this.configService.get<string>('WHISPER_URL') || 'http://localhost:9000';
   }
 
+  // ─── Shared cleanup helper ────────────────────────────────────────────────
+  private cleanQuestion(raw: string): string {
+    let q = raw.trim();
+    // Strip conversational openers: "Sure. Here's a new…", "Of course!", etc.
+    q = q.replace(/^(Sure|Of course|Certainly|I can help|Absolutely|Great|Here)[^.!?]*[.!?]\s*/i, '');
+    // Strip "Here is a / Here's a … interview question about …:"
+    q = q.replace(/^(Here is a|Here's a|The following is a|A|An)\s*(new\s*)?(technical\s*)?interview question\s*(about\s*[^:?]+?)?[:]?\s*/i, '');
+    // Strip "Question:" / "Q:" / numbered prefixes
+    q = q.replace(/^(Question:|Q:|\d+\.\s*)/i, '');
+    // Strip stray quotes
+    q = q.replace(/[\"']/g, '');
+    return q.trim();
+  }
+
   async generateInterviewQuestion(
     topic: string,
     jobTitle: string,
     difficulty: 'easy' | 'medium' | 'hard' = 'medium',
   ): Promise<string> {
-    const prompt = `You are an expert interviewer for a ${jobTitle} position. 
+    const prompt = `You are an expert interviewer for a ${jobTitle} position.
     Generate a single, specific technical interview question about "${topic}" at ${difficulty} difficulty level.
     The question should be concise (1-2 sentences), clear, and directly test practical knowledge of ${topic}.
-    Do not include any prefixes, explanations, or numbering. Just provide the question. 
+    Do not include any prefixes, explanations, conversational filler, or numbering.
+    Absolutely NO introductory phrases like "Sure, here is...", "Of course!", "I can help with that.", or "Question:".
+    Just provide the question text itself.
     Focus on real-world scenarios and best practices. Make the question direct and actionable.`;
 
     try {
       const response = await axios.post(`${this.ollamaUrl}/api/generate`, {
-        model: 'phi3:mini',
+        model: 'gemma:2b',
         prompt,
         stream: false,
       });
 
-      let question = response.data.response.trim();
-      question = question.replace(/^(Question:|Q:|\d+\.\s*)/i, '');
-      question = question.replace(/[\"']/g, '');
-      
+      const question = this.cleanQuestion(response.data.response);
       this.logger.log(`Generated question for ${topic}: ${question.substring(0, 50)}...`);
-      return question.trim();
+      return question;
     } catch (error) {
       this.logger.error(`Failed to generate question: ${error.message}`);
       throw new Error(`LLM generation failed: ${error.message}`);
@@ -123,7 +136,7 @@ export class AiService {
 
     try {
       const response = await axios.post(`${this.ollamaUrl}/api/generate`, {
-        model: 'phi3:mini',
+        model: 'gemma:2b',
         prompt,
         stream: false,
       });
@@ -152,27 +165,31 @@ export class AiService {
     previousQuestions: string[],
   ): Promise<string> {
     const previousQText = previousQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n');
-    
-    const prompt = `You are interviewing for a ${jobTitle} position focused on ${topic}.
-    Previous questions already asked:
+
+    const prompt = `You are an expert technical interviewer for a ${jobTitle} position.
+    Previous questions already asked about "${topic}":
     ${previousQText}
-    
-    Generate one new, different technical interview question about ${topic} that explores a different aspect or goes deeper than previous questions.
-    The question should be 1-2 sentences, specific, and practical.
-    Do not include any prefixes or explanations.`;
+
+    Generate ONE new technical interview question about "${topic}" that is completely different from the questions above.
+
+    STRICT RULES — you MUST follow all of them:
+    - Output ONLY the question itself. No other text.
+    - Do NOT start with words like: Sure, Of course, Certainly, Here is, Here's, I can, Great, Absolutely, The following.
+    - Do NOT include "Question:", "Q:", any number prefix, or any label.
+    - The question must be 1-2 sentences maximum.
+    - The question must test practical knowledge specific to ${topic}.
+    - The question must be completely different from every question listed above.`;
 
     try {
       const response = await axios.post(`${this.ollamaUrl}/api/generate`, {
-        model: 'phi3:mini',
+        model: 'gemma:2b',
         prompt,
         stream: false,
       });
 
-      let question = response.data.response.trim();
-      question = question.replace(/^(Question:|Q:|\d+\.\s*)/i, '');
-      question = question.replace(/[\"']/g, '');
-      
-      return question.trim();
+      const question = this.cleanQuestion(response.data.response);
+      this.logger.log(`Generated follow-up for ${topic}: ${question.substring(0, 50)}...`);
+      return question;
     } catch (error) {
       this.logger.error(`Failed to generate follow-up: ${error.message}`);
       throw new Error(`Follow-up generation failed: ${error.message}`);

@@ -39,8 +39,8 @@ start_container "ollama-llm" \
 "docker run -d \
 --name ollama-llm \
 -p 11434:11434 \
---memory=4g \
---cpus=2 \
+--memory=6g \
+--cpus=4 \
 ollama/ollama"
 
 
@@ -49,11 +49,11 @@ echo "Waiting for Ollama..."
 sleep 10
 
 # Pull model if not exists
-if ! docker exec ollama-llm ollama list | grep -q "phi3"; then
-    echo "Pulling phi3:mini model..."
-    docker exec ollama-llm ollama pull phi3:mini
+if ! docker exec ollama-llm ollama list | grep -q "gemma:2b"; then
+    echo "Pulling gemma:2b model..."
+    docker exec ollama-llm ollama pull gemma:2b         
 else
-    echo "phi3:mini already installed."
+    echo "gemma:2b already installed." 
 fi
 
 

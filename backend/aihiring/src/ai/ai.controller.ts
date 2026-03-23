@@ -36,6 +36,34 @@ export class AiController {
     return { question };
   }
 
+  @Post('generate-followup')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Generate follow-up interview question (avoids repeats)',
+    description: 'Uses LLM to generate a new question different from previously asked ones',
+  })
+  @ApiBody({
+    schema: {
+      properties: {
+        topic: { type: 'string' },
+        jobTitle: { type: 'string' },
+        difficulty: { type: 'string', enum: ['easy', 'medium', 'hard'] },
+        previousQuestions: { type: 'array', items: { type: 'string' } },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, schema: { properties: { question: { type: 'string' } } } })
+  async generateFollowUp(
+    @Body() body: { topic: string; jobTitle: string; difficulty?: 'easy' | 'medium' | 'hard'; previousQuestions?: string[] },
+  ) {
+    const question = await this.aiService.generateFollowUpQuestion(
+      body.topic,
+      body.jobTitle,
+      body.previousQuestions || [],
+    );
+    return { question };
+  }
+
   @Post('text-to-speech')
   @ApiOperation({
     summary: 'Convert text to speech',

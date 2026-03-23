@@ -7,11 +7,17 @@ export type InterviewDocument = Interview & Document;
 
 @Schema({ timestamps: true })
 export class Interview {
-  @Prop({ type: Types.ObjectId, ref: 'Candidate', required: true })
-  candidateId: Types.ObjectId;
+  @Prop({ required: true })
+  candidateName: string;
 
-  @Prop({ type: Types.ObjectId, ref: 'Job', required: true })
-  jobId: Types.ObjectId;
+  @Prop({ required: true })
+  interviewerName: string;
+
+  @Prop({ required: true })
+  interviewDate: Date;
+
+  @Prop({ required: true })
+  topic: string;
 
   @Prop({ default: 'scheduled' })
   status: string;

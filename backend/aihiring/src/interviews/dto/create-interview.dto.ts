@@ -1,12 +1,24 @@
-import { IsString } from 'class-validator';
+import { IsString, IsNotEmpty } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateInterviewDto {
   @IsString()
-  @ApiProperty({ description: 'Candidate ID', example: '507f1f77bcf86cd799439011' })
-  readonly candidateId: string;
+  @IsNotEmpty()
+  @ApiProperty({ description: 'Candidate name', example: 'John Doe' })
+  readonly candidateName: string;
 
   @IsString()
-  @ApiProperty({ description: 'Job ID', example: '507f1f77bcf86cd799439022' })
-  readonly jobId: string;
+  @IsNotEmpty()
+  @ApiProperty({ description: 'Interviewer name', example: 'Jane Doe' })
+  readonly interviewerName: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @ApiProperty({ description: 'Interview date and time', example: '2023-03-01T14:00:00.000Z' })
+  readonly interviewDate: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @ApiProperty({ description: 'Interview topic', example: 'devops' })
+  readonly topic: string;
 }
